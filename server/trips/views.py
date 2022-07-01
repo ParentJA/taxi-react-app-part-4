@@ -1,6 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.db.models import Q
-from rest_framework import generics, permissions, viewsets
+from rest_framework import generics, mixins, permissions, viewsets
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .models import Trip
@@ -16,7 +16,12 @@ class LogInView(TokenObtainPairView):
     serializer_class = LogInSerializer
 
 
-class TripView(viewsets.ReadOnlyModelViewSet):
+class TripView(
+    mixins.ListModelMixin, 
+    mixins.RetrieveModelMixin, 
+    mixins.UpdateModelMixin, 
+    viewsets.GenericViewSet,
+):
     lookup_field = 'id'
     lookup_url_kwarg = 'trip_id'
     permission_classes = (permissions.IsAuthenticated,)

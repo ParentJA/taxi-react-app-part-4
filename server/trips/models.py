@@ -2,8 +2,14 @@ import uuid
 
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.shortcuts import reverse
+
+
+def validate_rating(value):
+    if value < 1 or value > 5:
+        raise ValidationError('Rating must be an integer between 1 and 5')
 
 
 class User(AbstractUser):
@@ -46,6 +52,11 @@ class Trip(models.Model):
         blank=True,
         on_delete=models.DO_NOTHING,
         related_name='trips_as_rider'
+    )
+    rating = models.IntegerField(
+        null=True, 
+        blank=True, 
+        validators=[validate_rating,]
     )
 
     def __str__(self):
