@@ -49,6 +49,18 @@ export const getTrips = async () => {
   }
 };
 
+export const rateTrip = async (id, rating) => {
+  const url = `${process.env.REACT_APP_BASE_URL}/api/trip/${id}/`;
+  const token = getAccessToken();
+  const headers = { Authorization: `Bearer ${token}` };
+  try {
+    const response = await axios.patch(url, { rating }, { headers });
+    return { response, isError: false };
+  } catch (response) {
+    return { response, isError: true };
+  }
+}
+
 export const updateTrip = (trip) => {
   connect();
   const message = {
