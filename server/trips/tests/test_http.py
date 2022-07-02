@@ -13,7 +13,7 @@ from rest_framework import status
 from rest_framework.reverse import reverse
 from rest_framework.test import APITestCase
 
-from trips.serializers import NestedTripSerializer, TripSerializer, UserSerializer, make_cache_key
+from trips.caches import make_driver_rating_cache_key
 from trips.models import Trip
 
 PASSWORD = 'pAssw0rd!'
@@ -112,36 +112,82 @@ class HttpTripTest(APITestCase):
     def test_rider_can_rate_trip(self):
         # Given
         rating = 5
-        trip = Trip.objects.create(
-            pick_up_address='A', drop_off_address='B', rider=self.user)
+        driver = create_user(username='driver@example.com', group_name='driver')
+        unrated_trip = Trip.objects.create(
+            pick_up_address='A', drop_off_address='B', driver=driver, rider=self.user)
 
         # When
-        response = self.client.patch(trip.get_absolute_url(), {'rating': rating})
+        response = self.client.patch(unrated_trip.get_absolute_url(), {'rating': rating})
 
         # Then
         self.assertEqual(status.HTTP_200_OK, response.status_code)
         self.assertEqual(rating, response.data.get('rating'))
 
+    def test_rating_trip_populates_cache_with_average_rating(self):
+        # Given
+        driver = create_user(username='driver@example.com', group_name='driver')
+        Trip.objects.bulk_create([
+            Trip(pick_up_address='A', drop_off_address='B', driver=driver, rating=3),
+            Trip(pick_up_address='B', drop_off_address='C', driver=driver, rating=3),
+            Trip(pick_up_address='C', drop_off_address='D', driver=driver, rating=3),
+        ])
+        unrated_trip = Trip.objects.create(
+            pick_up_address='A', drop_off_address='B', driver=driver, rider=self.user)
+
+        cache_key = make_driver_rating_cache_key(driver.id)
+        cache.clear()
+
+        # When
+        response = self.client.patch(unrated_trip.get_absolute_url(), {'rating': 5})
+
+        # Then
+        self.assertEqual(status.HTTP_200_OK, response.status_code)
+        
+        # Cached value is (3 + 3 + 3 + 5) / 4 = 3.50
+        self.assertEqual('3.50', cache.get(cache_key))
+
+
+@override_settings(CACHES={
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'
+    }
+})
+class HttpDriverTest(APITestCase):
+    def setUp(self):
+        self.user = create_user()
+        self.client.login(username=self.user.username, password=PASSWORD)
+
+    def test_user_can_get_driver(self):
+        driver = create_user(username='driver@example.com', group_name='driver')
+        response = self.client.get(reverse('driver', kwargs={'driver_id': driver.id}))
+        self.assertEqual(status.HTTP_200_OK, response.status_code)
+        self.assertEqual(driver.id, response.data.get('id'))
+
+    def test_user_cannot_get_rider(self):
+        rider = create_user(username='rider@example.com', group_name='rider')
+        response = self.client.get(reverse('driver', kwargs={'driver_id': rider.id}))
+        self.assertEqual(status.HTTP_404_NOT_FOUND, response.status_code)
+
     def test_user_can_see_driver_rating(self):
         # Given
         driver = create_user(username='driver@example.com', group_name='driver')
-        trips = Trip.objects.bulk_create([
+        Trip.objects.bulk_create([
             Trip(pick_up_address='A', drop_off_address='B', driver=driver, rider=self.user, rating=4),
             Trip(pick_up_address='B', drop_off_address='C', driver=driver, rider=self.user, rating=5),
             Trip(pick_up_address='C', drop_off_address='D', driver=driver, rider=self.user, rating=5),
         ])
 
-        cache_key = make_cache_key(driver.id)
+        cache_key = make_driver_rating_cache_key(driver.id)
         cache.clear()
 
         # When
-        with patch('trips.serializers.cache.set', new=Mock(wraps=cache.set)) as mock_cache_set:
-            response = self.client.get(trips[0].get_absolute_url())
+        with patch('trips.caches.cache.set', new=Mock(wraps=cache.set)) as mock_cache_set:
+            response = self.client.get(reverse('driver', kwargs={'driver_id': driver.id}))
             mock_cache_set.assert_called_once_with(cache_key, '4.67')
 
         # Then
         self.assertEqual(status.HTTP_200_OK, response.status_code)
-        self.assertEqual('4.67', str(response.data.get('driver')['rating']))
+        self.assertEqual('4.67', str(response.data.get('rating')))
 
         # Value has been cached
         self.assertEqual('4.67', cache.get(cache_key))
@@ -149,51 +195,50 @@ class HttpTripTest(APITestCase):
     def test_user_can_see_driver_rating_from_cache(self):
         # Given
         driver = create_user(username='driver@example.com', group_name='driver')
-        trips = Trip.objects.bulk_create([
+        Trip.objects.bulk_create([
             Trip(pick_up_address='A', drop_off_address='B', driver=driver, rider=self.user, rating=4),
             Trip(pick_up_address='B', drop_off_address='C', driver=driver, rider=self.user, rating=5),
             Trip(pick_up_address='C', drop_off_address='D', driver=driver, rider=self.user, rating=5),
         ])
 
-        cache_key = make_cache_key(driver.id)
+        cache_key = make_driver_rating_cache_key(driver.id)
         cache.clear()
         cache.set(cache_key, '4.67')
 
         # When
-        with patch('trips.serializers.cache.set') as mock_cache_set:
-            response = self.client.get(trips[0].get_absolute_url())
+        with patch('trips.caches.cache.set') as mock_cache_set:
+            response = self.client.get(reverse('driver', kwargs={'driver_id': driver.id}))
             mock_cache_set.assert_not_called()
 
         # Then
         self.assertEqual(status.HTTP_200_OK, response.status_code)
-        self.assertEqual('4.67', str(response.data.get('driver')['rating']))
+        self.assertEqual('4.67', str(response.data.get('rating')))
 
     def test_user_cannot_see_driver_rating_below_threshold(self):
         # Given
         driver = create_user(username='driver@example.com', group_name='driver')
-        trips = Trip.objects.bulk_create([
+        Trip.objects.bulk_create([
             Trip(pick_up_address='A', drop_off_address='B', driver=driver, rider=self.user, rating=4),
             Trip(pick_up_address='B', drop_off_address='C', driver=driver, rider=self.user, rating=5),
             Trip(pick_up_address='C', drop_off_address='D', driver=driver, rider=self.user),
         ])
 
         # When
-        response = self.client.get(trips[0].get_absolute_url())
+        response = self.client.get(reverse('driver', kwargs={'driver_id': driver.id}))
 
         # Then
         self.assertEqual(status.HTTP_200_OK, response.status_code)
-        self.assertEqual(0, response.data.get('driver')['rating'])
+        self.assertEqual('0', response.data.get('rating'))
 
     def test_user_can_see_driver_num_trips(self):
         # Given
         driver = create_user(username='driver@example.com', group_name='driver')
-        trip = Trip.objects.create(
+        Trip.objects.create(
             pick_up_address='A', drop_off_address='B', driver=driver, rider=self.user)
 
         # When
-        response = self.client.get(trip.get_absolute_url())
+        response = self.client.get(reverse('driver', kwargs={'driver_id': driver.id}))
 
         # Then
         self.assertEqual(status.HTTP_200_OK, response.status_code)
-        self.assertEqual(1, response.data.get('driver')['num_trips'])
-        
+        self.assertEqual(1, response.data.get('num_trips'))

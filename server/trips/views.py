@@ -1,10 +1,10 @@
 from django.contrib.auth import get_user_model
-from django.db.models import Q
+from django.db.models import FilteredRelation, Q
 from rest_framework import generics, mixins, permissions, viewsets
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from .models import Trip
-from .serializers import LogInSerializer, NestedTripSerializer, UserSerializer
+from .serializers import DriverSerializer, LogInSerializer, NestedTripSerializer, UserSerializer
 
 
 class SignUpView(generics.CreateAPIView):
@@ -36,3 +36,15 @@ class TripView(
         if user.group == 'rider':
             return Trip.objects.filter(rider=user)
         return Trip.objects.none()
+
+
+class DriverView(generics.RetrieveAPIView):
+    lookup_field = 'id'
+    lookup_url_kwarg = 'driver_id'
+    permission_classes = (permissions.IsAuthenticated,)
+    queryset = get_user_model().objects.annotate(
+        user_groups=FilteredRelation('groups')
+    ).filter(
+        user_groups__name='driver'
+    )
+    serializer_class = DriverSerializer
