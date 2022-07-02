@@ -44,23 +44,19 @@ class UserSerializer(serializers.ModelSerializer):
 
 class DriverSerializer(serializers.ModelSerializer):
     group = serializers.CharField()
-    rating = serializers.SerializerMethodField(allow_null=True, default=None)
-    num_trips = serializers.SerializerMethodField(allow_null=True, default=None)
+    rating = serializers.SerializerMethodField()
+    num_trips = serializers.SerializerMethodField()
 
     def get_rating(self, obj):
-        if obj.group == 'driver':
-            return cache_driver_rating(obj.id)
-        return None
+        return cache_driver_rating(obj.id)
 
     def get_num_trips(self, obj):
-        if obj.group == 'driver':
-            trips = Trip.objects.filter(
-                driver=obj.id
-            ).aggregate(
-                Count('id')
-            )
-            return trips['id__count']
-        return None
+        trips = Trip.objects.filter(
+            driver=obj.id
+        ).aggregate(
+            Count('id')
+        )
+        return trips['id__count']
 
     class Meta:
         model = get_user_model()
